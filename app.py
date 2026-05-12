@@ -34,6 +34,7 @@ from openai import OpenAI
 load_dotenv()
 
 OPENAI_MODEL = "gpt-4o-mini"
+MAX_TOOL_LOOPS = 6  # 한 턴에 허용되는 모델 ↔ 도구 라운드트립 상한
 
 # ======================================================================
 # 페이지 설정
@@ -352,6 +353,9 @@ def record_post_care(
 # ======================================================================
 # OpenAI tool 스키마 — 위 4개 함수의 JSON schema
 # ======================================================================
+PRE_STAGES = ["첫 인사", "관계 확인", "가족 구성원 확인", "돌봄 실태", "경제 상황", "라우팅 안내", "마무리"]
+POST_STAGES = ["월간 기록", "지출 확인", "거주지 확인", "마무리"]
+
 UPDATE_REPORT_TOOL = {
     "type": "function",
     "function": {
@@ -359,9 +363,14 @@ UPDATE_REPORT_TOOL = {
         "description": "사전 상담 중 사용자에게서 얻은 정보를 즉시 레포트에 기록합니다.",
         "parameters": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "care_target": {"type": "string", "description": "돌봄 대상자와의 관계 (예: 할머니, 어머니, 형, 누나)."},
-                "care_target_relation_legal": {"type": "string", "description": "민법상 가족 여부 — '민법상 가족(친족)' / '비가족(친족 아님)'. 부모·조부모 등은 친족, 삼촌·고모·이모·자녀 등은 비가족."},
+                "care_target_relation_legal": {
+                    "type": "string",
+                    "enum": ["민법상 가족(친족)", "비가족(친족 아님)"],
+                    "description": "민법상 가족 여부. 부모·조부모 등은 친족, 삼촌·고모·이모·자녀 등은 비가족.",
+                },
                 "care_target_condition": {"type": "string", "description": "돌봄 대상자 상태 요약 (질병·연령·장애 등)."},
                 "living_with_target": {"type": "string", "description": "함께 살고 있는지 — '동거' / '별거' 등."},
                 "cocaregivers": {"type": "string", "description": "함께 돌보는 다른 가족 구성원 요약."},
@@ -379,13 +388,15 @@ SET_STAGE_TOOL = {
     "type": "function",
     "function": {
         "name": "set_stage",
-        "description": "현재 진행 단계를 업데이트합니다.",
+        "description": "현재 진행 단계를 업데이트합니다. 사전 상담 / 사후 관리 모드에 따라 허용 값이 다릅니다.",
         "parameters": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "stage": {
                     "type": "string",
-                    "description": "'첫 인사' | '관계 확인' | '가족 구성원 확인' | '돌봄 실태' | '경제 상황' | '라우팅 안내' | '마무리' 중 하나.",
+                    "enum": PRE_STAGES + POST_STAGES,
+                    "description": "현재 단계 라벨. 모드에 맞는 값만 사용할 것.",
                 },
             },
             "required": ["stage"],
@@ -400,6 +411,7 @@ TRIGGER_SAFETY_ALERT_TOOL = {
         "description": "위기 신호(자해·학대·방임 등) 감지 시 즉시 호출합니다.",
         "parameters": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {"reason": {"type": "string", "description": "한 문장 요약."}},
             "required": ["reason"],
         },
@@ -413,9 +425,10 @@ RECORD_POST_CARE_TOOL = {
         "description": "사후 관리 — 월간 돌봄기록 항목 기록.",
         "parameters": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "daily_change": {"type": "string", "description": "지난 달 ADL/IADL 변화 요약."},
-                "receipt_amount": {"type": "integer", "description": "영수증 금액(원)."},
+                "receipt_amount": {"type": "integer", "description": "영수증 금액(원). 영수증 사진을 직접 읽어 숫자만 입력.", "minimum": 0},
                 "receipt_item": {"type": "string", "description": "영수증 항목 (예: 약값, 병원비, 요양병원비)."},
                 "residency_change": {"type": "string", "description": "이사·전출 계획 ('없음' / '다음 달 경기도 이사 예정' 등)."},
             },
@@ -506,7 +519,7 @@ POST_SYSTEM_TEMPLATE = """당신은 ‘스프링(Spring)’의 사후 관리 AI 
 1) 일상 돌봄 변화(ADL/IADL): "지난 두 달 동안 식사나 씻는 걸 도와드리는 데 변화가 있었나요?"
    → record_post_care(daily_change=…) 로 기록.
 2) 경제적 지출(병원비·약값·요양병원비 등). 영수증을 사진으로 보내달라고 부드럽게 권유.
-   → 사용자가 사진을 올렸다고 말하면, AI가 자동으로 텍스트를 추출했다고 가정하고 항목/금액을 record_post_care(receipt_amount=…, receipt_item=…) 로 기록. 고부담형(월 40만 원) 유지 기준 자동 체크.
+   → 사용자가 영수증 이미지를 첨부하면 **사진을 직접 읽어** 항목명과 총액을 파악한 뒤 record_post_care(receipt_amount=…, receipt_item=…) 로 기록한다. 금액은 숫자만(원 단위 정수). 읽기 어려우면 사용자에게 한 번 더 묻는다. 고부담형(월 40만 원) 유지 기준은 누적 합계로 시스템이 자동 체크한다.
 3) 거주지 변동: "혹시 최근에 이사를 하셨거나 계획 중이신가요?"
    → 서울 외 전출 시 자격 상실 가능성을 부드럽게 안내. record_post_care(residency_change=…).
 4) 마무리 — 수집한 내용으로 돌봄기록서 초안이 정리되었음을 알리고 검토 요청.
@@ -686,22 +699,23 @@ def render_mode_select() -> None:
 # 3. 챗봇 세션 시작
 # ======================================================================
 def _format_chat_error(e: Exception, prefix: str = "오류") -> str:
-    """OpenAI 호출 실패를 한국어 메시지로 변환. 429/quota는 안내 분리."""
+    """OpenAI 호출 실패를 한국어 메시지로 변환. 429/quota·401은 안내 분리."""
     raw = str(e)
-    status = getattr(e, "status_code", None) or getattr(e, "code", None)
+    status = getattr(e, "status_code", None)  # int — HTTP status
+    code = getattr(e, "code", None)            # str — OpenAI error code (e.g. "insufficient_quota")
+    raw_l = raw.lower()
     is_quota = (
         status == 429
-        or "429" in raw
-        or "rate_limit" in raw.lower()
-        or "quota" in raw.lower()
-        or "insufficient_quota" in raw.lower()
+        or code in ("insufficient_quota", "rate_limit_exceeded")
+        or "rate_limit" in raw_l
+        or "quota" in raw_l
     )
     if is_quota:
         return (
             f"({prefix}: OpenAI API 사용량 한도를 초과했어요 — HTTP 429.\n"
             "잠시 뒤 다시 시도하거나, https://platform.openai.com/usage 에서 사용량/결제 상태를 확인해주세요.)"
         )
-    if status == 401 or "invalid_api_key" in raw.lower():
+    if status == 401 or code == "invalid_api_key" or "invalid_api_key" in raw_l:
         return f"({prefix}: OpenAI API 키가 유효하지 않습니다. .env의 OPENAI_API_KEY 확인.)"
     return f"({prefix}: {raw})"
 
@@ -716,7 +730,7 @@ def _run_chat_turn(user_content) -> str:
     tools = st.session_state.tools
     history.append({"role": "user", "content": user_content})
 
-    for _ in range(6):  # tool-call 최대 6회까지 허용
+    for _ in range(MAX_TOOL_LOOPS):
         resp = st.session_state.client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=history,
@@ -738,18 +752,32 @@ def _run_chat_turn(user_content) -> str:
                 ],
             })
             for tc in msg.tool_calls:
-                fn = TOOL_DISPATCH.get(tc.function.name)
-                try:
-                    args = json.loads(tc.function.arguments or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                result = fn(**args) if fn else f"unknown tool: {tc.function.name}"
-                history.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
+                history.append({"role": "tool", "tool_call_id": tc.id, "content": _dispatch_tool(tc)})
             continue
         history.append({"role": "assistant", "content": msg.content or ""})
         return (msg.content or "").strip()
 
     return "(상담사가 도구 호출을 너무 많이 시도했어요. 다시 말씀해주세요.)"
+
+
+def _dispatch_tool(tc) -> str:
+    """tool_call 1건을 실행해 결과 문자열을 반환. 모든 예외를 잡아서 모델이 회복할 수 있게 함."""
+    name = tc.function.name
+    fn = TOOL_DISPATCH.get(name)
+    if not fn:
+        return f"ERROR: unknown tool '{name}'"
+    try:
+        args = json.loads(tc.function.arguments or "{}")
+    except json.JSONDecodeError as e:
+        return f"ERROR: invalid JSON in arguments — {e}. 인자를 다시 확인하고 도구를 재호출하세요."
+    if not isinstance(args, dict):
+        return "ERROR: arguments must be a JSON object."
+    try:
+        return str(fn(**args))
+    except TypeError as e:
+        return f"ERROR: 인자 타입/이름이 맞지 않음 — {e}. 스키마를 다시 확인하고 재호출하세요."
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
 
 
 def _start_chat_session() -> None:
@@ -799,10 +827,7 @@ def render_sidebar() -> None:
             st.divider()
 
         if st.session_state.phase == "chat":
-            if st.session_state.mode == "pre":
-                stages = ["첫 인사", "관계 확인", "가족 구성원 확인", "돌봄 실태", "경제 상황", "라우팅 안내", "마무리"]
-            else:
-                stages = ["월간 기록", "지출 확인", "거주지 확인", "마무리"]
+            stages = PRE_STAGES if st.session_state.mode == "pre" else POST_STAGES
             try:
                 idx = stages.index(st.session_state.stage)
             except ValueError:
