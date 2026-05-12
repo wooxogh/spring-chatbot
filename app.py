@@ -43,7 +43,7 @@ st.set_page_config(page_title="스프링 — 가족돌봄청년 원스톱 안내
 st.markdown(
     """
     <style>
-      :root { --spring-orange: #ff6b3d; --spring-peach: #fde4d8; --spring-mint: #a8e0c5; }
+      :root { --spring-orange: #ff6b3d; --spring-peach: #fde4d8; --spring-mint: #a8e0c5; --spring-ink:#333; --spring-mute:#9aa0a6; }
       .spring-title { color: var(--spring-orange); font-weight: 800; }
       .spring-tag {
         display:inline-block; padding:4px 10px; border-radius:999px;
@@ -51,12 +51,62 @@ st.markdown(
         font-size:0.85em; font-weight:700; margin-right:6px;
       }
       .spring-quote { color:#666; font-style:italic; }
-      .stage-pill {
-        display:inline-block; padding:6px 12px; border-radius:999px;
-        background:#f4f4f6; color:#333; font-size:0.9em; margin:2px 4px 2px 0;
+
+      /* 상단 phase breadcrumb */
+      .crumbs {
+        display:flex; flex-wrap:wrap; gap:6px; align-items:center;
+        font-size:0.85em; margin: 4px 0 16px 0;
       }
-      .stage-pill.active { background:var(--spring-orange); color:#fff; font-weight:700; }
-      .stage-pill.done   { background:var(--spring-mint); color:#0d4d2c; }
+      .crumb {
+        padding:4px 10px; border-radius:999px;
+        background:#f4f4f6; color:#888;
+      }
+      .crumb.active { background:var(--spring-orange); color:#fff; font-weight:700; }
+      .crumb.done   { background:var(--spring-mint); color:#0d4d2c; }
+      .crumb-sep    { color:#bbb; padding:0 2px; }
+
+      /* 사이드바 — 세로 진행 단계 */
+      .stage-row {
+        padding:7px 10px; margin:3px 0; border-radius:6px;
+        border-left:3px solid #eee;
+        color: var(--spring-mute); font-size:0.92em;
+        display:flex; align-items:center; gap:8px;
+      }
+      .stage-row .stage-num {
+        width:18px; height:18px; line-height:18px; text-align:center;
+        border-radius:999px; background:#eee; color:#888;
+        font-size:0.75em; font-weight:700; flex:0 0 18px;
+      }
+      .stage-row.active {
+        border-left-color: var(--spring-orange);
+        background: var(--spring-peach);
+        color: var(--spring-orange); font-weight:700;
+      }
+      .stage-row.active .stage-num { background: var(--spring-orange); color:#fff; }
+      .stage-row.done {
+        border-left-color: var(--spring-mint);
+        color:#0d4d2c;
+      }
+      .stage-row.done .stage-num { background: var(--spring-mint); color:#0d4d2c; }
+
+      /* 챗 헤더 현재 단계 칩 */
+      .stage-now {
+        display:inline-block; vertical-align:middle; margin-left:10px;
+        padding:4px 10px; border-radius:999px;
+        background:var(--spring-peach); color:var(--spring-orange);
+        font-size:0.55em; font-weight:700;
+      }
+
+      /* 레포트 — 라벨/값 한 줄 */
+      .rep-row {
+        display:flex; justify-content:space-between; gap:12px;
+        padding:5px 0; border-bottom:1px dashed #eee;
+        font-size:0.92em;
+      }
+      .rep-row:last-child { border-bottom:none; }
+      .rep-k { color:#666; flex:0 0 38%; }
+      .rep-v { color:#222; text-align:right; flex:1; word-break:break-word; }
+      .rep-row.empty .rep-v { color:#c0c4cc; font-style:italic; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -75,7 +125,7 @@ def _init_state() -> None:
         "user": {},                   # {name, birth, age, region, route, can_portal}
         # 챗봇
         "messages": [],
-        "stage": "인사·동의",
+        "stage": "첫 인사",
         "report": {},
         "safety_alert": None,
         # 사후관리 — 영수증/지출
@@ -255,7 +305,7 @@ def set_stage(stage: str) -> str:
     """현재 진행 단계를 업데이트합니다.
 
     Args:
-        stage: "인사·동의" | "관계 확인" | "가족 구성원 확인" | "돌봄 실태" |
+        stage: "첫 인사" | "관계 확인" | "가족 구성원 확인" | "돌봄 실태" |
                "경제 상황" | "라우팅 안내" | "마무리" 중 하나.
     """
     st.session_state.stage = stage
@@ -344,7 +394,7 @@ I. 마무리 — 사전 상담 레포트가 정리되었음을 알림.
 
 【도구 사용】
 - 정보(돌봄 대상자·관계·돌봄 내용·시간·어려움·경제 상황 등)를 들으면 **즉시** update_report 호출.
-- 단계 진행 시 set_stage 호출 (인사·동의 → 관계 확인 → 가족 구성원 확인 → 돌봄 실태 → 경제 상황 → 라우팅 안내 → 마무리).
+- 단계 진행 시 set_stage 호출 (첫 인사 → 관계 확인 → 가족 구성원 확인 → 돌봄 실태 → 경제 상황 → 라우팅 안내 → 마무리).
 - 자해·자살·학대·폭력·방임·심한 우울 신호 감지 시 **즉시** trigger_safety_alert 호출 후, 답변에 1393(자살예방)·1577-1391(노인보호)·1366(여성긴급)·112 안내.
 
 이름은 사용자 이름({name})으로 부르고, 위 인사 문장 안의 'OO님'은 실제 이름으로 자연스럽게 바꿔 말하세요.
@@ -376,11 +426,34 @@ POST_SYSTEM_TEMPLATE = """당신은 ‘스프링(Spring)’의 사후 관리 AI 
 
 
 # ======================================================================
+# 공통 — phase breadcrumb (동의 → 가입 → 모드 → 상담)
+# ======================================================================
+_PHASES = [("consent", "동의"), ("signup", "정보 입력"), ("mode", "메뉴 선택"), ("chat", "AI 상담")]
+
+
+def render_phase_breadcrumb() -> None:
+    phase = st.session_state.phase
+    cur = next((i for i, (k, _) in enumerate(_PHASES) if k == phase), 0)
+    parts: list[str] = []
+    for i, (_, label) in enumerate(_PHASES):
+        if i < cur:
+            cls, txt = "done", f"✓ {label}"
+        elif i == cur:
+            cls, txt = "active", f"{i + 1}. {label}"
+        else:
+            cls, txt = "", f"{i + 1}. {label}"
+        parts.append(f"<span class='crumb {cls}'>{txt}</span>")
+    sep = "<span class='crumb-sep'>›</span>"
+    st.markdown(f"<div class='crumbs'>{sep.join(parts)}</div>", unsafe_allow_html=True)
+
+
+# ======================================================================
 # 0. 동의 게이트
 # ======================================================================
 def render_consent() -> None:
     st.markdown("<h1>🌱 <span class='spring-title'>스프링 (Spring)</span></h1>", unsafe_allow_html=True)
     st.caption("가족을 품은 온기로 피워낸 봄, 이제는 그대의 봄을 향해 도약하도록")
+    render_phase_breadcrumb()
     st.subheader("시작하기 전에")
 
     with st.container(border=True):
@@ -419,6 +492,7 @@ def render_consent() -> None:
 def render_signup() -> None:
     st.markdown("<h1>🌱 <span class='spring-title'>회원 가입</span></h1>", unsafe_allow_html=True)
     st.caption("이름·생년월일·주소지를 받아 챗봇이 사전 상담을 자동으로 맞춰 드려요.")
+    render_phase_breadcrumb()
 
     with st.form("signup_form", border=True):
         col1, col2 = st.columns(2)
@@ -478,6 +552,7 @@ def render_mode_select() -> None:
         f"<span class='spring-tag'>{u['route_label']}</span>",
         unsafe_allow_html=True,
     )
+    render_phase_breadcrumb()
     st.write("진행하실 메뉴를 골라주세요.")
 
     col1, col2 = st.columns(2)
@@ -494,7 +569,7 @@ def render_mode_select() -> None:
             if st.button("사전 상담 시작 →", key="mode_pre", use_container_width=True, type="primary"):
                 st.session_state.mode = "pre"
                 st.session_state.phase = "chat"
-                st.session_state.stage = "인사·동의"
+                st.session_state.stage = "첫 인사"
                 _start_chat_session()
                 st.rerun()
     with col2:
@@ -522,39 +597,6 @@ def render_mode_select() -> None:
 # ======================================================================
 # 3. 챗봇 세션 시작
 # ======================================================================
-def _format_chat_error(e: Exception, prefix: str = "오류") -> str:
-    """Gemini 호출 실패를 한국어 메시지로 변환. 429(quota)는 어떤 한도인지 함께 노출."""
-    raw = str(e)
-    is_quota = (
-        "429" in raw
-        or "RESOURCE_EXHAUSTED" in raw
-        or "quota" in raw.lower()
-    )
-    if not is_quota:
-        return f"({prefix}: {raw})"
-
-    metric = ""
-    retry_delay = ""
-    for line in raw.splitlines():
-        s = line.strip().strip(",")
-        if ("quotaMetric" in s or "quotaId" in s) and not metric:
-            metric = s
-        elif "retryDelay" in s and not retry_delay:
-            retry_delay = s
-
-    detail = ""
-    if metric:
-        detail += f"\n• 초과된 한도: {metric}"
-    if retry_delay:
-        detail += f"\n• 재시도 대기: {retry_delay}"
-
-    return (
-        f"({prefix}: Gemini API 사용량 한도를 초과했어요 — HTTP 429 RESOURCE_EXHAUSTED.\n"
-        "잠시 뒤 다시 시도하거나, https://aistudio.google.com/usage 에서 어떤 한도가 걸렸는지 확인해주세요."
-        f"{detail})"
-    )
-
-
 def _start_chat_session() -> None:
     u = st.session_state.user
     if st.session_state.mode == "pre":
@@ -588,7 +630,7 @@ def _start_chat_session() -> None:
         first = st.session_state.chat.send_message(kickoff)
         first_text = (first.text or "").strip() or "안녕하세요. 스프링 AI 상담사예요."
     except Exception as e:
-        first_text = _format_chat_error(e, prefix="시작 오류")
+        first_text = f"(시작 오류: {e})"
     st.session_state.messages.append({"role": "assistant", "content": first_text})
 
 
@@ -610,7 +652,7 @@ def render_sidebar() -> None:
 
         if st.session_state.phase == "chat":
             if st.session_state.mode == "pre":
-                stages = ["인사·동의", "관계 확인", "가족 구성원 확인", "돌봄 실태", "경제 상황", "라우팅 안내", "마무리"]
+                stages = ["첫 인사", "관계 확인", "가족 구성원 확인", "돌봄 실태", "경제 상황", "라우팅 안내", "마무리"]
             else:
                 stages = ["월간 기록", "지출 확인", "거주지 확인", "마무리"]
             try:
@@ -620,7 +662,11 @@ def render_sidebar() -> None:
             st.subheader("진행 단계")
             for i, s in enumerate(stages):
                 cls = "active" if i == idx else ("done" if i < idx else "")
-                st.markdown(f"<span class='stage-pill {cls}'>{i + 1}. {s}</span>", unsafe_allow_html=True)
+                num = "✓" if i < idx else str(i + 1)
+                st.markdown(
+                    f"<div class='stage-row {cls}'><span class='stage-num'>{num}</span>{s}</div>",
+                    unsafe_allow_html=True,
+                )
             st.divider()
 
         st.subheader("긴급 연락처")
@@ -652,15 +698,25 @@ def render_chat() -> None:
     col_chat, col_side = st.columns([3, 2])
 
     with col_chat:
-        st.markdown(f"<h2>{title}</h2>", unsafe_allow_html=True)
+        st.markdown(
+            f"<h2>{title}<span class='stage-now'>현재 단계 · {st.session_state.stage}</span></h2>",
+            unsafe_allow_html=True,
+        )
         st.caption("편하게 텍스트로 입력하세요. 이름·연령·거주지는 이미 알고 있어요.")
 
         if st.session_state.safety_alert:
-            st.error(
-                f"🚨 **위기 신호 감지**: {st.session_state.safety_alert}\n\n"
-                "즉시 **1393**(자살예방상담)·**112**·**120**(안심돌봄)으로 연락하세요. "
-                "가까운 어른에게도 도움을 요청해주세요."
-            )
+            with st.container(border=True):
+                st.error(
+                    f"🚨 **위기 신호 감지**: {st.session_state.safety_alert}\n\n"
+                    "지금 바로 아래 번호로 연락하시거나, 가까운 어른께 도움을 요청해주세요."
+                )
+                b1, b2, b3 = st.columns(3)
+                b1.link_button("☎ 1393 자살예방", "tel:1393", use_container_width=True)
+                b2.link_button("☎ 112 신고", "tel:112", use_container_width=True)
+                b3.link_button("☎ 120 안심돌봄", "tel:120", use_container_width=True)
+                if st.button("알림 닫기", key="dismiss_safety", use_container_width=True):
+                    st.session_state.safety_alert = None
+                    st.rerun()
 
         chat_box = st.container(height=440)
         with chat_box:
@@ -706,7 +762,7 @@ def render_chat() -> None:
                     response = st.session_state.chat.send_message(parts)
                     assistant_text = (response.text or "").strip() or "(상담사가 응답하지 않았습니다. 다시 말씀해주세요.)"
                 except Exception as e:
-                    assistant_text = _format_chat_error(e)
+                    assistant_text = f"(오류: {e})"
 
             st.session_state.messages.append({"role": "assistant", "content": assistant_text})
             st.rerun()
@@ -718,6 +774,15 @@ def render_chat() -> None:
             _render_post_report()
 
 
+def _rep_row(label: str, value: str | None) -> None:
+    v = (value or "").strip()
+    cls = "rep-row" if v else "rep-row empty"
+    st.markdown(
+        f"<div class='{cls}'><span class='rep-k'>{label}</span><span class='rep-v'>{v or '—'}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_pre_report() -> None:
     u = st.session_state.user
     r = st.session_state.report
@@ -726,28 +791,25 @@ def _render_pre_report() -> None:
 
     with st.container(border=True):
         st.markdown("**기본 정보 (가입 시)**")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("이름", u.get("name", "—"))
-            st.metric("거주지", u.get("region", "—"))
-        with c2:
-            st.metric("만 나이", str(u.get("age", "—")))
-            st.metric("간편인증", "가능" if u.get("simple_auth") else "불가")
+        _rep_row("이름", u.get("name"))
+        _rep_row("만 나이", f"{u.get('age', '—')}세" if u.get("age") is not None else None)
+        _rep_row("거주지", u.get("region"))
+        _rep_row("간편인증", "가능" if u.get("simple_auth") else "불가")
 
     with st.container(border=True):
         st.markdown("**돌봄 정보**")
-        st.write(f"**대상자**: {r.get('care_target', '—')}")
-        st.write(f"**민법상 가족 여부**: {r.get('care_target_relation_legal', '—')}")
-        st.write(f"**상태**: {r.get('care_target_condition', '—')}")
-        st.write(f"**동거 여부**: {r.get('living_with_target', '—')}")
-        st.write(f"**함께 돌보는 분**: {r.get('cocaregivers', '—')}")
-        st.write(f"**돌봄 내용**: {r.get('care_content', '—')}")
-        st.write(f"**주당 돌봄 시간**: {r.get('care_hours_per_week', '—')}")
+        _rep_row("대상자", r.get("care_target"))
+        _rep_row("민법상 가족 여부", r.get("care_target_relation_legal"))
+        _rep_row("상태", r.get("care_target_condition"))
+        _rep_row("동거 여부", r.get("living_with_target"))
+        _rep_row("함께 돌보는 분", r.get("cocaregivers"))
+        _rep_row("돌봄 내용", r.get("care_content"))
+        _rep_row("주당 돌봄 시간", r.get("care_hours_per_week"))
 
     with st.container(border=True):
         st.markdown("**본인 상황**")
-        st.write(f"**어려움**: {r.get('difficulties', '—')}")
-        st.write(f"**경제 상황**: {r.get('economic_status', '—')}")
+        _rep_row("어려움", r.get("difficulties"))
+        _rep_row("경제 상황", r.get("economic_status"))
 
     with st.container(border=True):
         st.markdown("**1차 판별 결과**")
