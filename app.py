@@ -317,7 +317,7 @@ PRE_SYSTEM_TEMPLATE = """당신은 가족돌봄청소년·청년 원스톱 공�
    사용자에게는 자연스러운 질문 한 문장만. 항목 분류는 도구로 기록.
 4. 채팅 메시지이므로 **2~3문장 이내, 짧게**. 목록·숫자 나열·이모지 금지.
 5. 9세 어린이도 이해할 쉬운 단어. 필요한 정서적 공감 한 마디 ("그러셨군요", "잘 견뎌오셨네요").
-6. 도구만 호출하고 끝내지 말 것 — 항상 사용자에게 들려줄 한국어 문장 포함.
+6. 도구만 호출하고 끝내지 말 것 — 항상 사용자에게 전달할 한국어 문장 포함.
 
 【시작 인사 — 반드시 이 문장으로 첫 응답 시작】
 {branch_intro}
@@ -359,7 +359,7 @@ POST_SYSTEM_TEMPLATE = """당신은 ‘스프링(Spring)’의 사후 관리 AI 
 1. 따뜻하고 짧게. 한 번에 한 가지만 묻기.
 2. **메타 설명/제목/번호 절대 금지** (예: "1. 일상 돌봄 현황 파악(ADL/IADL)" → 안 됨).
 3. 채팅 톤 — 2~3문장 이내, 이모지·목록·숫자 나열 금지.
-4. 도구 호출 후 반드시 사용자에게 들려줄 한 문장 포함.
+4. 도구 호출 후 반드시 사용자에게 전달할 한 문장 포함.
 
 【시작 인사 — 반드시 이 문장으로】
 "안녕하세요, {name}님! 벌써 두 달이 지나 돌봄기록서를 제출할 시기가 다가왔어요. 기한(익월 10일) 내에 미제출이 2회 누적되면 지원금이 중지될 수 있으니 저랑 지금 바로 작성해 볼까요? 이번 달 돌봄 대상자분과의 일상은 어떠셨나요? 편하게 이야기해 주시면 제가 기록서 작성을 도와드릴게요!"
@@ -522,6 +522,39 @@ def render_mode_select() -> None:
 # ======================================================================
 # 3. 챗봇 세션 시작
 # ======================================================================
+def _format_chat_error(e: Exception, prefix: str = "오류") -> str:
+    """Gemini 호출 실패를 한국어 메시지로 변환. 429(quota)는 어떤 한도인지 함께 노출."""
+    raw = str(e)
+    is_quota = (
+        "429" in raw
+        or "RESOURCE_EXHAUSTED" in raw
+        or "quota" in raw.lower()
+    )
+    if not is_quota:
+        return f"({prefix}: {raw})"
+
+    metric = ""
+    retry_delay = ""
+    for line in raw.splitlines():
+        s = line.strip().strip(",")
+        if ("quotaMetric" in s or "quotaId" in s) and not metric:
+            metric = s
+        elif "retryDelay" in s and not retry_delay:
+            retry_delay = s
+
+    detail = ""
+    if metric:
+        detail += f"\n• 초과된 한도: {metric}"
+    if retry_delay:
+        detail += f"\n• 재시도 대기: {retry_delay}"
+
+    return (
+        f"({prefix}: Gemini API 사용량 한도를 초과했어요 — HTTP 429 RESOURCE_EXHAUSTED.\n"
+        "잠시 뒤 다시 시도하거나, https://aistudio.google.com/usage 에서 어떤 한도가 걸렸는지 확인해주세요."
+        f"{detail})"
+    )
+
+
 def _start_chat_session() -> None:
     u = st.session_state.user
     if st.session_state.mode == "pre":
@@ -555,7 +588,7 @@ def _start_chat_session() -> None:
         first = st.session_state.chat.send_message(kickoff)
         first_text = (first.text or "").strip() or "안녕하세요. 스프링 AI 상담사예요."
     except Exception as e:
-        first_text = f"(시작 오류: {e})"
+        first_text = _format_chat_error(e, prefix="시작 오류")
     st.session_state.messages.append({"role": "assistant", "content": first_text})
 
 
@@ -673,7 +706,7 @@ def render_chat() -> None:
                     response = st.session_state.chat.send_message(parts)
                     assistant_text = (response.text or "").strip() or "(상담사가 응답하지 않았습니다. 다시 말씀해주세요.)"
                 except Exception as e:
-                    assistant_text = f"(오류: {e})"
+                    assistant_text = _format_chat_error(e)
 
             st.session_state.messages.append({"role": "assistant", "content": assistant_text})
             st.rerun()
