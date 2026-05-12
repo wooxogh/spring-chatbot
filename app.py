@@ -22,15 +22,18 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 from datetime import date, datetime
 
 import streamlit as st
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 load_dotenv()
+
+OPENAI_MODEL = "gpt-4o-mini"
 
 # ======================================================================
 # 페이지 설정
@@ -140,19 +143,19 @@ def _init_state() -> None:
 _init_state()
 
 # ======================================================================
-# Gemini 클라이언트
+# OpenAI 클라이언트
 # ======================================================================
-api_key = os.getenv("GEMINI_API_KEY")
+api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
-    st.error("⚠️ GEMINI_API_KEY가 설정되지 않았습니다.")
+    st.error("⚠️ OPENAI_API_KEY가 설정되지 않았습니다.")
     st.info(
         "`.env.example`을 `.env`로 복사하고 키를 입력한 뒤 다시 실행해주세요.\n"
-        "https://aistudio.google.com/apikey 에서 무료로 발급 가능합니다."
+        "https://platform.openai.com/api-keys 에서 발급 가능합니다."
     )
     st.stop()
 
 if "client" not in st.session_state:
-    st.session_state.client = genai.Client(api_key=api_key)
+    st.session_state.client = OpenAI(api_key=api_key)
 
 
 # ======================================================================
@@ -254,7 +257,7 @@ def determine_route(age: int, region: str, is_veteran: bool = False) -> dict:
 
 
 # ======================================================================
-# 도구 함수 — Gemini가 호출하여 레포트/단계/위기경보 업데이트
+# 도구 함수 — 모델이 호출하여 레포트/단계/위기경보 업데이트
 # ======================================================================
 def update_report(
     care_target: str = "",
@@ -344,6 +347,91 @@ def record_post_care(
         st.session_state.post_residency_change = residency_change
         st.session_state.report["residency_change"] = residency_change
     return "OK"
+
+
+# ======================================================================
+# OpenAI tool 스키마 — 위 4개 함수의 JSON schema
+# ======================================================================
+UPDATE_REPORT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "update_report",
+        "description": "사전 상담 중 사용자에게서 얻은 정보를 즉시 레포트에 기록합니다.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "care_target": {"type": "string", "description": "돌봄 대상자와의 관계 (예: 할머니, 어머니, 형, 누나)."},
+                "care_target_relation_legal": {"type": "string", "description": "민법상 가족 여부 — '민법상 가족(친족)' / '비가족(친족 아님)'. 부모·조부모 등은 친족, 삼촌·고모·이모·자녀 등은 비가족."},
+                "care_target_condition": {"type": "string", "description": "돌봄 대상자 상태 요약 (질병·연령·장애 등)."},
+                "living_with_target": {"type": "string", "description": "함께 살고 있는지 — '동거' / '별거' 등."},
+                "cocaregivers": {"type": "string", "description": "함께 돌보는 다른 가족 구성원 요약."},
+                "care_content": {"type": "string", "description": "일상 돌봄 내용 (식사·이동·위생·약 챙김 등)."},
+                "care_hours_per_week": {"type": "string", "description": "주당 돌봄 시간 대략 (예: '약 30시간', '거의 매일')."},
+                "difficulties": {"type": "string", "description": "본인이 겪는 어려움 (학업·일·건강·정서)."},
+                "economic_status": {"type": "string", "description": "경제 상황 — 수급 자격(기초생활수급/차상위/일반), 의료비·생활비 부담 등."},
+                "notes": {"type": "string", "description": "그 외 메모할 사항."},
+            },
+        },
+    },
+}
+
+SET_STAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "set_stage",
+        "description": "현재 진행 단계를 업데이트합니다.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "stage": {
+                    "type": "string",
+                    "description": "'첫 인사' | '관계 확인' | '가족 구성원 확인' | '돌봄 실태' | '경제 상황' | '라우팅 안내' | '마무리' 중 하나.",
+                },
+            },
+            "required": ["stage"],
+        },
+    },
+}
+
+TRIGGER_SAFETY_ALERT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "trigger_safety_alert",
+        "description": "위기 신호(자해·학대·방임 등) 감지 시 즉시 호출합니다.",
+        "parameters": {
+            "type": "object",
+            "properties": {"reason": {"type": "string", "description": "한 문장 요약."}},
+            "required": ["reason"],
+        },
+    },
+}
+
+RECORD_POST_CARE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "record_post_care",
+        "description": "사후 관리 — 월간 돌봄기록 항목 기록.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "daily_change": {"type": "string", "description": "지난 달 ADL/IADL 변화 요약."},
+                "receipt_amount": {"type": "integer", "description": "영수증 금액(원)."},
+                "receipt_item": {"type": "string", "description": "영수증 항목 (예: 약값, 병원비, 요양병원비)."},
+                "residency_change": {"type": "string", "description": "이사·전출 계획 ('없음' / '다음 달 경기도 이사 예정' 등)."},
+            },
+        },
+    },
+}
+
+TOOL_DISPATCH = {
+    "update_report": update_report,
+    "set_stage": set_stage,
+    "trigger_safety_alert": trigger_safety_alert,
+    "record_post_care": record_post_care,
+}
+
+PRE_TOOLS = [UPDATE_REPORT_TOOL, SET_STAGE_TOOL, TRIGGER_SAFETY_ALERT_TOOL]
+POST_TOOLS = [RECORD_POST_CARE_TOOL, SET_STAGE_TOOL, TRIGGER_SAFETY_ALERT_TOOL]
 
 
 # ======================================================================
@@ -597,6 +685,73 @@ def render_mode_select() -> None:
 # ======================================================================
 # 3. 챗봇 세션 시작
 # ======================================================================
+def _format_chat_error(e: Exception, prefix: str = "오류") -> str:
+    """OpenAI 호출 실패를 한국어 메시지로 변환. 429/quota는 안내 분리."""
+    raw = str(e)
+    status = getattr(e, "status_code", None) or getattr(e, "code", None)
+    is_quota = (
+        status == 429
+        or "429" in raw
+        or "rate_limit" in raw.lower()
+        or "quota" in raw.lower()
+        or "insufficient_quota" in raw.lower()
+    )
+    if is_quota:
+        return (
+            f"({prefix}: OpenAI API 사용량 한도를 초과했어요 — HTTP 429.\n"
+            "잠시 뒤 다시 시도하거나, https://platform.openai.com/usage 에서 사용량/결제 상태를 확인해주세요.)"
+        )
+    if status == 401 or "invalid_api_key" in raw.lower():
+        return f"({prefix}: OpenAI API 키가 유효하지 않습니다. .env의 OPENAI_API_KEY 확인.)"
+    return f"({prefix}: {raw})"
+
+
+def _run_chat_turn(user_content) -> str:
+    """history에 user 메시지 추가 → tool-call 루프 실행 → assistant 텍스트 반환.
+
+    user_content: OpenAI Chat Completions의 user content (문자열 또는 멀티모달 list).
+    히스토리는 st.session_state.history 에 누적된다 (system 포함).
+    """
+    history = st.session_state.history
+    tools = st.session_state.tools
+    history.append({"role": "user", "content": user_content})
+
+    for _ in range(6):  # tool-call 최대 6회까지 허용
+        resp = st.session_state.client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=history,
+            tools=tools,
+            temperature=0.7,
+        )
+        msg = resp.choices[0].message
+        if msg.tool_calls:
+            history.append({
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in msg.tool_calls
+                ],
+            })
+            for tc in msg.tool_calls:
+                fn = TOOL_DISPATCH.get(tc.function.name)
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                result = fn(**args) if fn else f"unknown tool: {tc.function.name}"
+                history.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
+            continue
+        history.append({"role": "assistant", "content": msg.content or ""})
+        return (msg.content or "").strip()
+
+    return "(상담사가 도구 호출을 너무 많이 시도했어요. 다시 말씀해주세요.)"
+
+
 def _start_chat_session() -> None:
     u = st.session_state.user
     if st.session_state.mode == "pre":
@@ -607,30 +762,23 @@ def _start_chat_session() -> None:
             route_label=u["route_label"],
             branch_intro=u["branch_message"],
         )
-        tools = [update_report, set_stage, trigger_safety_alert]
+        tools = PRE_TOOLS
         kickoff = "[시스템] 사용자가 입장했습니다. 위에 적힌 ‘시작 인사’ 문장으로 첫 응답을 시작해 주세요."
     else:
         sys = POST_SYSTEM_TEMPLATE.format(name=u["name"], age=u["age"], region=u["region"])
-        tools = [record_post_care, set_stage, trigger_safety_alert]
+        tools = POST_TOOLS
         kickoff = "[시스템] 사용자가 입장했습니다. 위에 적힌 시작 인사 문장으로 대화를 열어주세요."
 
     st.session_state.messages = []
     st.session_state.report = {}
     st.session_state.safety_alert = None
+    st.session_state.tools = tools
+    st.session_state.history = [{"role": "system", "content": sys}]
 
-    st.session_state.chat = st.session_state.client.chats.create(
-        model="gemini-2.5-flash",
-        config=types.GenerateContentConfig(
-            system_instruction=sys,
-            tools=tools,
-            temperature=0.7,
-        ),
-    )
     try:
-        first = st.session_state.chat.send_message(kickoff)
-        first_text = (first.text or "").strip() or "안녕하세요. 스프링 AI 상담사예요."
+        first_text = _run_chat_turn(kickoff) or "안녕하세요. 스프링 AI 상담사예요."
     except Exception as e:
-        first_text = f"(시작 오류: {e})"
+        first_text = _format_chat_error(e, prefix="시작 오류")
     st.session_state.messages.append({"role": "assistant", "content": first_text})
 
 
@@ -748,21 +896,28 @@ def render_chat() -> None:
                 display = (display + f"\n📎 {receipt_name} (영수증)").strip()
             st.session_state.messages.append({"role": "user", "content": display})
 
-            parts: list = []
-            if text_input:
-                parts.append(types.Part.from_text(text=text_input))
             if receipt_bytes:
-                parts.append(types.Part.from_bytes(data=receipt_bytes, mime_type=receipt_mime))
-                parts.append(types.Part.from_text(
-                    text="[시스템] 사용자가 영수증 사진을 첨부했습니다. 사진에서 항목/금액을 읽어 record_post_care 도구로 기록하세요."
-                ))
+                b64 = base64.b64encode(receipt_bytes).decode("ascii")
+                content_parts: list = []
+                if text_input:
+                    content_parts.append({"type": "text", "text": text_input})
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{receipt_mime};base64,{b64}"},
+                })
+                content_parts.append({
+                    "type": "text",
+                    "text": "[시스템] 사용자가 영수증 사진을 첨부했습니다. 사진에서 항목/금액을 읽어 record_post_care 도구로 기록하세요.",
+                })
+                user_content = content_parts
+            else:
+                user_content = text_input or ""
 
             with st.spinner("스프링이 듣고 있어요…"):
                 try:
-                    response = st.session_state.chat.send_message(parts)
-                    assistant_text = (response.text or "").strip() or "(상담사가 응답하지 않았습니다. 다시 말씀해주세요.)"
+                    assistant_text = _run_chat_turn(user_content) or "(상담사가 응답하지 않았습니다. 다시 말씀해주세요.)"
                 except Exception as e:
-                    assistant_text = f"(오류: {e})"
+                    assistant_text = _format_chat_error(e)
 
             st.session_state.messages.append({"role": "assistant", "content": assistant_text})
             st.rerun()

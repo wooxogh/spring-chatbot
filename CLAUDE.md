@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # 처음 한 번
-cp .env.example .env   # GEMINI_API_KEY 채우기 — https://aistudio.google.com/apikey
+cp .env.example .env   # OPENAI_API_KEY 채우기 — https://platform.openai.com/api-keys
 .venv/bin/pip install -r requirements.txt
 
 # 매번 실행
@@ -29,7 +29,7 @@ cp .env.example .env   # GEMINI_API_KEY 채우기 — https://aistudio.google.co
 
 ```
 consent  →  signup  →  mode  →  chat
-(동의)    (이름/생년월일/거주지)  (사전상담|사후관리)  (Gemini 챗)
+(동의)    (이름/생년월일/거주지)  (사전상담|사후관리)  (OpenAI 챗)
 ```
 
 각 phase는 `render_consent / render_signup / render_mode_select / render_chat` 한 함수가 그린다. 파일 끝의 라우터(`phase = st.session_state.phase`)가 분기한다.
@@ -44,16 +44,16 @@ consent  →  signup  →  mode  →  chat
 
 지원 지자체 키워드는 `SEOUL_KEYWORDS` / `YOUTH_ON_KEYWORDS` 상수. 시/도 키워드만 매칭하므로 "서울특별시 강남구"처럼 시 단위가 들어와도 동작한다.
 
-### Gemini 챗 세션 — 도구 호출 패턴
+### OpenAI 챗 세션 — 도구 호출 패턴
 
-`_start_chat_session()`이 모드별 시스템 프롬프트(`PRE_SYSTEM_TEMPLATE` / `POST_SYSTEM_TEMPLATE`)와 tool 함수 목록으로 `client.chats.create(...)`를 호출해서 세션을 만들고, kickoff 메시지로 첫 발화를 강제한다. 모델은 `gemini-2.5-flash`.
+`_start_chat_session()`이 모드별 시스템 프롬프트(`PRE_SYSTEM_TEMPLATE` / `POST_SYSTEM_TEMPLATE`)로 `st.session_state.history`를 초기화하고 kickoff 메시지로 첫 발화를 강제한다. 모델은 `OPENAI_MODEL`(기본 `gpt-4o-mini`). 매 턴마다 `_run_chat_turn()`이 `client.chat.completions.create(...)`를 호출하고, 응답에 `tool_calls`가 있으면 `TOOL_DISPATCH` 매핑으로 실제 Python 함수를 실행한 뒤 결과를 `role: tool` 메시지로 history에 넣고 다시 호출(최대 6회 루프).
 
 도구 함수는 모델이 호출하면 **즉시 `st.session_state`를 변경**한다 (사이드 이펙트 함수):
 
 - 사전상담: `update_report`, `set_stage`, `trigger_safety_alert`
 - 사후관리: `record_post_care`, `set_stage`, `trigger_safety_alert`
 
-함수의 docstring과 파라미터 설명이 그대로 Gemini의 function declaration이 되므로 docstring을 함부로 줄이지 말 것. 도구 시그니처를 바꾸면 시스템 프롬프트의 사용 설명도 같이 갱신한다.
+도구 스키마는 `UPDATE_REPORT_TOOL` / `SET_STAGE_TOOL` / `TRIGGER_SAFETY_ALERT_TOOL` / `RECORD_POST_CARE_TOOL` 네 개의 JSON schema로 명시되어 있고, 실제 호출은 동명의 Python 함수에 위임된다. 도구 시그니처를 바꿀 때는 (1) Python 함수 시그니처, (2) 위 JSON 스키마, (3) 시스템 프롬프트의 사용 설명 세 곳을 같이 갱신한다.
 
 ### 입출력
 
